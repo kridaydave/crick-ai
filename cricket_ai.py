@@ -1114,3 +1114,164 @@ if __name__ == '__main__':
     print("\nFeature Importances:")
     for feat, imp in sorted(zip(features, model.feature_importances_), key=lambda x: x[1], reverse=True):
         print(f"  {feat}: {imp:.4f}")
+
+
+def predict_match(team1, team2, venue, city, toss_winner, toss_decision, match_date, df, deliveries, model, features):
+    """
+    Predict the winner of a future match.
+    
+    Parameters:
+    -----------
+    team1 : str - Home team
+    team2 : str - Away team
+    venue : str - Match venue
+    city : str - City
+    toss_winner : str - Who won the toss
+    toss_decision : str - 'bat' or 'field'
+    match_date : str - Date in YYYY-MM-DD format
+    df : DataFrame - Historical matches
+    deliveries : DataFrame - Historical deliveries
+    model : Trained model
+    features : list - Feature names
+    
+    Returns:
+    --------
+    dict - Prediction with probabilities
+    """
+    from datetime import datetime
+    
+    match_date = pd.to_datetime(match_date)
+    
+    elo_system = ELORatingSystem(k_factor=20)
+    
+    for _, row in df.iterrows():
+        if pd.notna(row['winner']):
+            winner = row['winner']
+            loser = team2 if winner == team1 else team1
+            if winner in [team1, team2]:
+                result_margin = row['result_margin'] if pd.notna(row['result_margin']) else None
+                is_draw = row['result'] == 'tie'
+                elo_system.update_elo(winner, loser, 'T20', row['date'], result_margin, is_draw)
+    
+    elo1 = elo_system.get_elo(team1, 'T20', match_date)
+    elo2 = elo_system.get_elo(team2, 'T20', match_date)
+    expected1 = elo_system.get_expected_score(elo1, elo2)
+    
+    t1_matches = df[((df['team1'] == team1) | (df['team2'] == team1)) & (df['date'] < match_date)]
+    t2_matches = df[((df['team1'] == team2) | (df['team2'] == team2)) & (df['date'] < match_date)]
+    
+    t1_form = t1_matches.tail(10)['winner'].eq(team1).mean() if len(t1_matches) > 0 else 0.5
+    t2_form = t2_matches.tail(10)['winner'].eq(team2).mean() if len(t2_matches) > 0 else 0.5
+    
+    h2h = df[
+        ((df['team1'] == team1) & (df['team2'] == team2)) |
+        ((df['team1'] == team2) & (df['team2'] == team1))
+    ]
+    h2h = h2h[h2h['date'] < match_date]
+    h2h_rate = (h2h['winner'] == team1).sum() / len(h2h) if len(h2h) > 0 else 0.5
+    
+    toss_winner_is_team1 = 1 if toss_winner == team1 else 0
+    toss_decision_bat = 1 if toss_decision == 'bat' else 0
+    
+    toss_winner_hist = df[df['toss_winner'] == toss_winner]
+    toss_winner_hist = toss_winner_hist[toss_winner_hist['date'] < match_date]
+    toss_win_rate = toss_winner_hist['winner'].eq(toss_winner).mean() if len(toss_winner_hist) > 0 else 0.5
+    
+    match_data = {
+        'toss_winner_is_team1': toss_winner_is_team1,
+        'toss_decision_bat': toss_decision_bat,
+        'team1_elo': elo1,
+        'team2_elo': elo2,
+        'elo_diff': elo1 - elo2,
+        'expected_team1_win': expected1,
+        'team1_form': t1_form,
+        'team2_form': t2_form,
+        'form_diff': t1_form - t2_form,
+        'h2h_team1_winrate': h2h_rate,
+        'team1_venue_elo': elo1,
+        'team2_venue_elo': elo2,
+        'venue_elo_diff': elo1 - elo2,
+        'toss_winner_hist_winrate': toss_win_rate,
+        'team1_top_scorer_avg': 25,
+        'team2_top_scorer_avg': 25,
+        'team1_bowler_wkt_avg': 1.5,
+        'team2_bowler_wkt_avg': 1.5,
+        'team1_boundary_pct': 15,
+        'team2_boundary_pct': 15,
+        'venue_chase_win_pct': 50,
+        'venue_bat_first_win_pct': 50,
+        'is_playoffs': 0,
+        'team1_powerplay_runs_hist': 35,
+        'team2_powerplay_runs_hist': 35,
+        'team1_mid_runs_hist': 45,
+        'team2_mid_runs_hist': 45
+    }
+    
+    X_pred = pd.DataFrame([match_data])[features].fillna(0.5)
+    
+    prob = model.predict_proba(X_pred)[0]
+    prediction = model.predict(X_pred)[0]
+    
+    winner = team1 if prediction == 1 else team2
+    
+    return {
+        'predicted_winner': winner,
+        'team1_win_probability': round(prob[1] * 100, 1),
+        'team2_win_probability': round(prob[0] * 100, 1),
+        'team1_elo': round(elo1, 1),
+        'team2_elo': round(elo2, 1),
+        'team1_form': round(t1_form * 100, 1),
+        'team2_form': round(t2_form * 100, 1),
+        'h2h_team1': round(h2h_rate * 100, 1)
+    }
+
+
+if __name__ == '__main__':
+    print("\n" + "="*60)
+    print("IPL MATCH PREDICTOR")
+    print("="*60)
+    
+    train_df = df[df['season_year'] < 2021].copy()
+    test_df = df[df['season_year'] >= 2021].copy()
+    
+    X_train = train_df[features].fillna(0.5)
+    y_train = train_df[target]
+    
+    model = xgb.XGBClassifier(
+        n_estimators=100,
+        max_depth=3,
+        learning_rate=0.05,
+        use_label_encoder=False,
+        eval_metric='logloss',
+        random_state=42
+    )
+    model.fit(X_train, y_train)
+    
+    print("\nModel trained successfully!")
+    print("-"*60)
+    
+    print("\nExample: Predicting MI vs CSK at Wankhede")
+    result = predict_match(
+        team1='Mumbai Indians',
+        team2='Chennai Super Kings',
+        venue='Wankhede Stadium',
+        city='Mumbai',
+        toss_winner='Mumbai Indians',
+        toss_decision='field',
+        match_date='2024-04-15',
+        df=df,
+        deliveries=deliveries,
+        model=model,
+        features=features
+    )
+    
+    print("\nPREDICTION RESULT")
+    print("-" * 40)
+    print(f"Predicted Winner: {result['predicted_winner']}")
+    print(f"Mumbai Indians Win Probability: {result['team1_win_probability']}%")
+    print(f"Chennai Super Kings Win Probability: {result['team2_win_probability']}%")
+    print(f"Team1 ELO: {result.get('team1_elo', 'N/A')}")
+    print(f"Team2 ELO: {result.get('team2_elo', 'N/A')}")
+    print(f"Team1 Form: {result.get('team1_form', 'N/A')}%")
+    print(f"Team2 Form: {result.get('team2_form', 'N/A')}%")
+    print(f"H2H Win Rate (Team1): {result.get('h2h_team1', 'N/A')}%")
