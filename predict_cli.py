@@ -256,34 +256,105 @@ def main():
     
     while True:
         print_header()
-        print("\n=== UPCOMING MATCHES ===\n")
+        print("\n=== MAIN MENU ===")
+        print("\n[1] Predict a Match")
+        print("[2] Today's Match")
+        print("[3] Team Rankings")
+        print("[4] Recent Results")
+        print("[5] Exit")
         
-        for idx, match in enumerate(upcoming[:20]):
-            match_date = datetime.strptime(match["date"], "%Y-%m-%d")
-            date_str = match_date.strftime("%b %d")
-            home = get_team_short(match["home"])
-            away = get_team_short(match["away"])
-            venue = get_venue_full_name(match["venue"])[:20]
-            
-            print(f"  [{idx+1:>2}] {date_str} | {home:>3} vs {away:<3} | {venue}")
+        menu_choice = input("\nSelect option: ").strip()
         
-        print("\n" + "-"*60)
-        choice = input("Select match number to predict (or 'q' to quit): ").strip()
-        
-        if choice.lower() == 'q':
+        if menu_choice == '5' or menu_choice.lower() == 'q':
             print("\nThanks for using IPL Predictor!")
             break
         
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(upcoming):
-                pred = predictor.predict(upcoming[idx])
-                print_prediction(pred)
-                input("\nPress Enter to continue...")
+        elif menu_choice == '1':
+            # Original match prediction
+            print_header()
+            print("\n=== UPCOMING MATCHES ===\n")
+            
+            for idx, match in enumerate(upcoming[:20]):
+                match_date = datetime.strptime(match["date"], "%Y-%m-%d")
+                date_str = match_date.strftime("%b %d")
+                home = get_team_short(match["home"])
+                away = get_team_short(match["away"])
+                venue = get_venue_full_name(match["venue"])[:20]
+                
+                print(f"  [{idx+1:>2}] {date_str} | {home:>3} vs {away:<3} | {venue}")
+            
+            print("\n" + "-"*60)
+            choice = input("Select match number to predict (or 'b' for back): ").strip()
+            
+            if choice.lower() == 'b':
+                continue
+            
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(upcoming):
+                    pred = predictor.predict(upcoming[idx])
+                    print_prediction(pred)
+                    input("\nPress Enter to continue...")
+                else:
+                    print("Invalid selection!")
+            except ValueError:
+                print("Please enter a valid number!")
+        
+        elif menu_choice == '2':
+            # Today's match
+            today_str = today.strftime("%Y-%m-%d")
+            today_matches = [m for m in upcoming if m["date"] == today_str]
+            
+            if today_matches:
+                for m in today_matches:
+                    pred = predictor.predict(m)
+                    print_prediction(pred)
             else:
-                print("Invalid selection!")
-        except ValueError:
-            print("Please enter a valid number!")
+                print("\nNo match scheduled for today!")
+                print(f"Next match: {upcoming[0]['date']}")
+            
+            input("\nPress Enter to continue...")
+        
+        elif menu_choice == '3':
+            # Team rankings
+            print("\n=== TEAM RANKINGS ===")
+            print("(Based on ELO ratings)")
+            
+            # Get current ELO for all teams
+            teams_elo = {}
+            for match in upcoming:
+                for team in [match["home"], match["away"]]:
+                    if team not in teams_elo:
+                        elo = predictor.get_team_elo(team, datetime.strptime(match["date"], "%Y-%m-%d"))
+                        teams_elo[team] = elo
+            
+            sorted_teams = sorted(teams_elo.items(), key=lambda x: x[1], reverse=True)
+            
+            print("\n" + "-"*40)
+            print(f"{'Rank':<6}{'Team':<25}{'ELO':>8}")
+            print("-"*40)
+            for i, (team, elo) in enumerate(sorted_teams, 1):
+                print(f"{i:<6}{get_team_short(team):<25}{elo:>8.0f}")
+            
+            input("\nPress Enter to continue...")
+        
+        elif menu_choice == '4':
+            # Recent results
+            print("\n=== RECENT RESULTS ===")
+            recent = predictor.df.tail(10)
+            
+            for _, row in recent.iterrows():
+                date_str = row['date'].strftime("%b %d")
+                winner = get_team_short(row['winner'])
+                t1 = get_team_short(row['team1'])
+                t2 = get_team_short(row['team2'])
+                result = f"{winner} won"
+                print(f"  {date_str} | {t1} vs {t2} | {result}")
+            
+            input("\nPress Enter to continue...")
+        
+        else:
+            print("Invalid option!")
 
 
 if __name__ == "__main__":
